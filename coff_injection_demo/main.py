@@ -111,6 +111,9 @@ class COFFInjectionDemo:
             print(f"[USING CUSTOM PAYLOAD] {payload_path}")
             validation = self.coff_analyzer.validate_coff_file(payload_path)
         else:
+            # Create payload. Note: for some payload types (e.g. message_box) you may want
+            # PayloadCreator to request a "real" shellcode variant. PayloadCreator implementation
+            # should handle the payload_type accordingly.
             payload_path = self.payload_creator.create_realistic_coff_payload(args.payload_type, args.architecture)
             print(f"Created payload: {payload_path}")
             print(f"Payload size: {os.path.getsize(payload_path)} bytes")
@@ -264,7 +267,8 @@ def main():
     parser.add_argument('--list-targets', action='store_true',
                        help='List common injection targets')
     parser.add_argument('--payload', '-p', help='Custom COFF payload file')
-    parser.add_argument('--payload-type', choices=['demo', 'meterpreter', 'beacon'], 
+    # Added 'message_box' as an allowed payload type for quick demo/testing
+    parser.add_argument('--payload-type', choices=['demo', 'meterpreter', 'beacon', 'message_box'], 
                        default='demo', help='Type of payload to generate')
     parser.add_argument('--architecture', choices=['x86', 'x64'], default='x86',
                        help='Target architecture')
