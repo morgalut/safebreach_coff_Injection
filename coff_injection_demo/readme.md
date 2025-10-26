@@ -1,4 +1,3 @@
-
 # COFF Process Injection Demo
 
 An advanced demonstration of COFF (Common Object File Format) process injection techniques for educational and research purposes. This project showcases how COFF object files can be used for memory-only execution and process injection, bypassing traditional security controls.

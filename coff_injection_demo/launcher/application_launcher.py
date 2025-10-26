@@ -3,6 +3,7 @@
 import subprocess
 import sys
 import os
+import shutil
 from pathlib import Path
 
 class ApplicationLauncher:
@@ -65,20 +66,37 @@ class ApplicationLauncher:
         
         return None
     
-    def launch_app(self, app_name, args="", capture=False):
+    def ensure_file_accessible(self, file_path):
+        """Ensure a file is accessible to external executables by making a copy in the bin directory"""
+        path = Path(file_path)
+        
+        if not path.exists():
+            return None
+            
+        # Use the bin directory as target
+        target_dir = Path(__file__).parent.parent / "bin"
+        
+        # Create target directory if it doesn't exist
+        target_dir.mkdir(exist_ok=True)
+            
+        # Copy file to target directory
+        target_path = target_dir / path.name
+        try:
+            shutil.copy2(path, target_path)
+            print(f"[FILE COPIED] {path.name} -> {target_path}")
+            return str(target_path)
+        except Exception as e:
+            print(f"[WARNING] Could not copy {path.name} to {target_dir}: {e}")
+            # Fallback to absolute path
+            return str(path.resolve())
+    
+    def launch_app(self, app_name, args="", capture=False, ensure_files=None):
         """Launch application with arguments"""
         app_path = self.find_application(app_name)
         
         if not app_path:
             print(f"[ERROR] Application not found: {app_name}")
             print("Available search locations:")
-            print("1. Registered custom paths")
-            print("2. Current working directory")
-            print("3. Project bin/ directory")
-            print("4. Project src/ directory") 
-            print("5. Project root directory")
-            print("6. PATH environment variable")
-            print("\nExpected locations in this project:")
             project_root = Path(__file__).parent.parent
             bin_path = project_root / "bin" / app_name
             src_path = project_root / "src" / app_name
@@ -87,21 +105,45 @@ class ApplicationLauncher:
             print(f"   - {project_root / app_name}")
             return 1, f"Application {app_name} not found", ""
         
-        cmd = f'"{app_path}" {args}'
+        # Ensure files are accessible (copy to bin directory if needed)
+        file_replacements = {}
+        if ensure_files:
+            for file_path in ensure_files:
+                accessible_path = self.ensure_file_accessible(file_path)
+                if accessible_path:
+                    # Store the replacement mapping
+                    file_replacements[file_path] = accessible_path
+        
+        # Build the command with proper path handling
+        resolved_args = args
+        for original_path, accessible_path in file_replacements.items():
+            # Replace the file path in arguments - handle both quoted and unquoted
+            original_quoted = f'"{original_path}"'
+            accessible_quoted = f'"{accessible_path}"'
+            
+            # Replace quoted paths first
+            if original_quoted in resolved_args:
+                resolved_args = resolved_args.replace(original_quoted, accessible_quoted)
+            else:
+                # Replace unquoted paths
+                resolved_args = resolved_args.replace(original_path, accessible_path)
+        
+        cmd = f'"{app_path}" {resolved_args}'
         print(f"[EXECUTING] {cmd}")
         sys.stdout.flush()
         
         try:
-            # Set current directory to the app's directory to help with DLL loading
-            current_dir = os.getcwd()
-            app_dir = str(app_path.parent)
-            if app_dir:
-                os.chdir(app_dir)
+            # Store original directory
+            original_dir = os.getcwd()
+            
+            # Set current directory to the bin directory where files are accessible
+            bin_dir = Path(__file__).parent.parent / "bin"
+            os.chdir(bin_dir)
             
             p = subprocess.Popen(cmd, shell=True, 
                                 stdout=subprocess.PIPE if capture else None,
                                 stderr=subprocess.PIPE if capture else None,
-                                universal_newlines=False)  # Important: handle as binary
+                                universal_newlines=False)
         
             if capture:
                 out, err = p.communicate()
@@ -116,17 +158,17 @@ class ApplicationLauncher:
                     err = err.decode('latin-1', errors='replace') if err else ""
                 
                 # Restore original directory
-                os.chdir(current_dir)
+                os.chdir(original_dir)
                 return p.returncode, out, err
             else:
                 p.wait()
                 # Restore original directory
-                os.chdir(current_dir)
+                os.chdir(original_dir)
                 return p.returncode, "", ""
         except Exception as e:
             # Restore original directory on error
             try:
-                os.chdir(current_dir)
+                os.chdir(original_dir)
             except:
                 pass
             return 1, "", f"Failed to launch {app_name}: {str(e)}"
