@@ -61,6 +61,13 @@ python -m main --list-targets
 
 # Run demo with default settings
 python -m main --target notepad.exe --payload-type demo
+
+# Run commands
+
+python3 main.py --target notepad.exe --payload-type message_box --architecture x86 --skip-env-check
+
+python3 main.py --payload-type message_box --architecture x86 --skip-env-check
+
 ```
 
 ### Advanced Usage

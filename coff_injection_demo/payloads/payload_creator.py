@@ -14,7 +14,7 @@ class PayloadCreator:
         payload_path = f"coff_payload_{payload_type}.obj"
         
         # Get appropriate shellcode
-        shellcode = self.shellcode_generator.create_shellcode_payload(payload_type)
+        payload_path = self.payload_creator.create_realistic_coff_payload(payload_type="message_box", architecture="x86")
         
         # COFF File Header
         coff_data = b""
