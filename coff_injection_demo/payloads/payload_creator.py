@@ -21,8 +21,9 @@ class PayloadCreator:
         if payload_type == "message_box":
             # Use real Windows shellcode (shows a MessageBox)
             shellcode = self.shellcode_generator.create_shellcode_payload(
-                payload_type="message_box", real_injection=True
+                payload_type="message_box", real_injection=True, target_process="notepad.exe"
             )
+
         else:
             # Use simulated payloads for safe testing (demo/meterpreter/beacon)
             shellcode = self.shellcode_generator.create_shellcode_payload(

