@@ -13,22 +13,19 @@ class PayloadCreator:
     def create_realistic_coff_payload(self, payload_type="demo", architecture="x86"):
         """
         Create a realistic COFF object file with proper sections.
-        Automatically uses real_injection=True for 'message_box' payloads.
+        Uses real shellcode for message_box payloads.
         """
         payload_path = f"coff_payload_{payload_type}.obj"
 
-        # --- Select the correct shellcode type ---
-        if payload_type == "message_box":
-            # Use real Windows shellcode (shows a MessageBox)
-            shellcode = self.shellcode_generator.create_shellcode_payload(
-                payload_type="message_box", real_injection=True, target_process="notepad.exe"
-            )
-
-        else:
-            # Use simulated payloads for safe testing (demo/meterpreter/beacon)
-            shellcode = self.shellcode_generator.create_shellcode_payload(
-                payload_type=payload_type, real_injection=False
-            )
+        # Always use real injection for message_box, simulated for others
+        real_injection = (payload_type == "message_box")
+        
+        shellcode = self.shellcode_generator.create_shellcode_payload(
+            payload_type=payload_type, 
+            real_injection=real_injection,
+            target_process="notepad.exe",
+            architecture=architecture
+        )
 
         # --- Build COFF File Header ---
         coff_data = b""
@@ -52,7 +49,8 @@ class PayloadCreator:
         )
 
         # --- Calculate section offsets ---
-        text_raw_data_offset = 20 + (40 * number_of_sections)  # after headers
+        header_size = 20 + (40 * number_of_sections)  # COFF header + section headers
+        text_raw_data_offset = header_size
         data_raw_data_offset = text_raw_data_offset + len(shellcode)
         rdata_raw_data_offset = data_raw_data_offset + 64  # .data section size
 
@@ -110,8 +108,8 @@ class PayloadCreator:
         print(f"    -> Type: {payload_type}")
         print(f"    -> Architecture: {architecture}")
         print(f"    -> Shellcode size: {len(shellcode)} bytes")
-        if payload_type == "message_box":
-            print("    -> [INFO] Using real Windows MessageBox shellcode (safe demo)")
+        if real_injection:
+            print("    -> [INFO] Using real Windows shellcode")
         else:
             print("    -> [INFO] Using simulated payload")
 
