@@ -62,28 +62,18 @@ python -m main --list-targets
 # Run demo with default settings
 python -m main --target notepad.exe --payload-type demo
 
-# Run commands
 
-python3 main.py --target notepad.exe --payload-type message_box --architecture x86 --skip-env-check
-
-python3 main.py --payload-type message_box --architecture x86 --skip-env-check
 
 ```
 
 ### Advanced Usage
 ```bash
-# Use different payload types
-python -m main --target notepad.exe --payload-type meterpreter
-python -m main --target notepad.exe --payload-type beacon
+# Make sure you're running as Administrator
+python main.py --target explorer.exe --payload-type message_box --architecture x86 --real-injection
 
-# Specify custom payload file
-python -m main --target explorer.exe --payload custom_payload.obj
-
-# List running processes
-python -m main --list-processes
-
-# Register custom application paths
-python -m main --register-path loader_enhanced.exe C:\custom\path\loader_enhanced.exe --target notepad.exe
+# Or try with Notepad (start it first)
+notepad.exe
+python main.py --target notepad.exe --payload-type message_box --architecture x86 --real-injection
 ```
 
 ### Command Line Options
